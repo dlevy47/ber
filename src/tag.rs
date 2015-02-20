@@ -89,7 +89,7 @@ fn read_extended_number (r: &mut Reader) -> Result<u64, err::Error> {
 
         ret |= bits << (7 * count);
 
-        if b & 0x80 != 0 {
+        if b & 0x80 == 0 {
             break;
         }
         count += 1;
@@ -99,7 +99,7 @@ fn read_extended_number (r: &mut Reader) -> Result<u64, err::Error> {
 }
 
 fn maybe_read_extended_number (b: u8, r: &mut Reader) -> Result<u64, err::Error> {
-    if b == 0x7F {
+    if b == 0x1F {
         read_extended_number(r)
     } else {
         Ok(b as u64)
@@ -202,7 +202,7 @@ impl Tag {
         let (_class, flavor, number) = match read_identifiers(r) {
             Ok(x) => x,
             Err(mut e) => {
-                e.offset = offset;
+                e.offset = r.tell();
                 return Err(e);
             },
         };
@@ -210,16 +210,22 @@ impl Tag {
         let length = match read_length(r) {
             Ok(x) => x,
             Err(mut e) => {
-                e.offset = offset;
+                e.offset = r.tell();
                 return Err(e);
             },
         };
 
         if length == Length::Indefinite  && flavor == Flavor::Primitive {
-            return Err(err::Error::new(err::Kind::InvalidLength, 0, None));
+            return Err(err::Error::new(err::Kind::InvalidLength, r.tell(), None));
         }
 
-        let payload = try!(read_payload(&length, &flavor, r));
+        let payload = match read_payload(&length, &flavor, r) {
+            Ok(x) => x,
+            Err(mut e) => {
+                e.offset = r.tell();
+                return Err(e);
+            },
+        };
 
         Ok(Tag {
             number: number,
@@ -252,6 +258,50 @@ mod test {
                 offset: Some(0),
                 payload: Payload::Constructed(vec![ Tag {
                     number: Number::Universal(Type::Utf8String),
+                    length: Length::Some(3),
+                    offset: Some(2),
+                    payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
+                } ]),
+            }
+            );
+    }
+
+    #[test]
+    fn test_ber_read_long_length () {
+        let payload = vec![0x30, 0x80, 0x0C, 0x82, 0x03, 0x00, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut MemReader::new(payload)).unwrap();
+
+        println!("{:?}", tag);
+
+        assert!(
+            tag == Tag {
+                number: Number::Universal(Type::Sequence),
+                length: Length::Indefinite,
+                offset: Some(0),
+                payload: Payload::Constructed(vec![ Tag {
+                    number: Number::Universal(Type::Utf8String),
+                    length: Length::Some(3),
+                    offset: Some(2),
+                    payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
+                } ]),
+            }
+            );
+    }
+
+    #[test]
+    fn test_ber_read_extended_number () {
+        let payload = vec![0x30, 0x80, 0x9F, 0x0A, 0x82, 0x03, 0x00, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut MemReader::new(payload)).unwrap();
+
+        println!("{:?}", tag);
+
+        assert!(
+            tag == Tag {
+                number: Number::Universal(Type::Sequence),
+                length: Length::Indefinite,
+                offset: Some(0),
+                payload: Payload::Constructed(vec![ Tag {
+                    number: Number::ContextSpecific(10),
                     length: Length::Some(3),
                     offset: Some(2),
                     payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
