@@ -1,12 +1,12 @@
 use std::error::{self, FromError};
 use std::fmt;
-use std::old_io as io;
+use std::io;
 
 pub enum Kind {
     InvalidTypeAndFlavor,
     InvalidLength,
     NumberOverflow,
-    IoError(io::IoError),
+    IoError(io::Error),
 }
 
 pub struct Error {
@@ -59,8 +59,8 @@ impl error::Error for Error {
     }
 }
 
-impl FromError<io::IoError> for Error {
-    fn from_error (err: io::IoError) -> Error {
+impl FromError<io::Error> for Error {
+    fn from_error (err: io::Error) -> Error {
         Error {
             kind: Kind::IoError(err),
             offset: 0,

@@ -1,13 +1,13 @@
-use std::old_io::IoResult;
+use std::io::{self, Read};
 
-pub struct TrackedReader<'a> {
-    inner:      &'a mut (Reader + 'a),
+pub struct TrackedRead<'a> {
+    inner:      &'a mut (Read + 'a),
     read_bytes: usize,
 }
 
-impl<'a> TrackedReader<'a> {
-    pub fn new (inner: &'a mut (Reader + 'a)) -> TrackedReader<'a> {
-        TrackedReader {
+impl<'a> TrackedRead<'a> {
+    pub fn new (inner: &'a mut (Read + 'a)) -> TrackedRead<'a> {
+        TrackedRead {
             inner: inner,
             read_bytes: 0,
         }
@@ -17,8 +17,8 @@ impl<'a> TrackedReader<'a> {
     }
 }
 
-impl<'a> Reader for TrackedReader<'a> {
-    fn read (&mut self, buf: &mut [u8]) -> IoResult<usize> {
+impl<'a> Read for TrackedRead<'a> {
+    fn read (&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = try!(self.inner.read(buf));
         self.read_bytes += count;
         Ok(count)

@@ -1,9 +1,14 @@
-use err;
-use util::TrackedReader;
+extern crate byteorder;
 
+use std::io::{self, Write, Read};
 use std::num::FromPrimitive;
 
-#[derive(Debug, FromPrimitive, PartialEq, Eq)]
+use self::byteorder::{ReadBytesExt, WriteBytesExt};
+
+use err;
+use util::TrackedRead;
+
+#[derive(Debug, FromPrimitive, PartialEq, Eq, Copy)]
 pub enum Type {
     Eoc              = 0,
     Boolean          = 1,
@@ -44,7 +49,7 @@ pub enum Number {
     Private(u64),
 }
 
-#[derive(FromPrimitive)]
+#[derive(FromPrimitive, Copy)]
 enum Class {
     Universal       = 0,
     Application     = 1,
@@ -52,7 +57,7 @@ enum Class {
     Private         = 3,
 }
 
-#[derive(PartialEq, Eq, FromPrimitive)]
+#[derive(PartialEq, Eq, FromPrimitive, Copy)]
 enum Flavor {
     Primitive   = 0,
     Constructed = 1,
@@ -65,7 +70,7 @@ pub enum Payload {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum Length {
+enum Length {
     Indefinite,
     Some(u64),
 }
@@ -73,14 +78,13 @@ pub enum Length {
 #[derive(PartialEq, Eq, Debug)]
 pub struct Tag {
     pub number:  Number,
-    pub length:  Length,
     pub offset:  Option<usize>,
     pub payload: Payload,
 }
 
-fn read_extended_number (r: &mut Reader) -> Result<u64, err::Error> {
+fn read_extended_number (mut r: &mut Read) -> Result<u64, err::Error> {
     // 
-    let mut count = 0us;
+    let mut count = 0usize;
     let mut ret = 0u64;
 
     while count < 8 {
@@ -98,7 +102,7 @@ fn read_extended_number (r: &mut Reader) -> Result<u64, err::Error> {
     Ok(ret)
 }
 
-fn maybe_read_extended_number (b: u8, r: &mut Reader) -> Result<u64, err::Error> {
+fn maybe_read_extended_number (b: u8, r: &mut Read) -> Result<u64, err::Error> {
     if b == 0x1F {
         read_extended_number(r)
     } else {
@@ -106,7 +110,7 @@ fn maybe_read_extended_number (b: u8, r: &mut Reader) -> Result<u64, err::Error>
     }
 }
 
-fn read_identifiers (r: &mut Reader) -> Result<(Class, Flavor, Number), err::Error> {
+fn read_identifiers (mut r: &mut Read) -> Result<(Class, Flavor, Number), err::Error> {
     let b = try!(r.read_u8());
 
     // these are unwrappable because they are comprehensive within their ranges
@@ -133,7 +137,7 @@ fn read_identifiers (r: &mut Reader) -> Result<(Class, Flavor, Number), err::Err
     Ok((class, flavor, number))
 }
 
-fn read_length (r: &mut Reader) -> Result<Length, err::Error> {
+fn read_length (mut r: &mut Read) -> Result<Length, err::Error> {
     let b = try!(r.read_u8());
 
     if b == 0x80 {
@@ -160,10 +164,13 @@ fn read_length (r: &mut Reader) -> Result<Length, err::Error> {
     }
 }
 
-fn read_payload(length: &Length, flavor: &Flavor, r: &mut TrackedReader) -> Result<Payload, err::Error> {
+fn read_payload(length: &Length, flavor: &Flavor, mut r: &mut TrackedRead) -> Result<Payload, err::Error> {
     if let &Flavor::Primitive = flavor {
         if let Length::Some(ref l) = *length {
-            Ok(Payload::Primitive(try!(r.read_exact(*l as usize))))
+            let mut buf = vec![0; *l as usize];
+            //TODO: handle partial reads?
+            try!(r.read(&mut buf));
+            Ok(Payload::Primitive(buf))
         } else {
             unreachable!()
         }
@@ -195,8 +202,105 @@ fn read_payload(length: &Length, flavor: &Flavor, r: &mut TrackedReader) -> Resu
     }
 }
 
+fn write_extended_number (mut w: &mut Write, mut num: u64) -> io::Result<()> {
+    let mask = 0x7F;
+
+    while num > 0 {
+        let mut b = (num & mask) as u8;
+
+        num >>= 7;
+        if num != 0 {
+            b |= 0x80;
+        }
+
+        try!(w.write_u8(b));
+    }
+    Ok(())
+}
+
+fn maybe_write_extended_number (w: &mut Write, num: u64) -> io::Result<()> {
+    if num >= 0x1F {
+        write_extended_number(w, num)
+    } else {
+        Ok(())
+    }
+}
+
+fn write_identifiers (mut w: &mut Write, class: &Class, flavor: &Flavor, number: &Number) -> io::Result<()> {
+    let b: u8 = 
+        (*class as u8)  << 6 |
+        (*flavor as u8) << 5 |
+        match *number {
+            Number::Universal(ref t) => (*t as u8),
+            Number::Application(ref n) |
+                Number::ContextSpecific(ref n) |
+                Number::Private(ref n) => if *n >= 0x1F {
+                    0x1F
+                } else {
+                    *n as u8
+                }
+        };
+
+    try!(w.write_u8(b));
+    match *number {
+        Number::Application(ref num) |
+            Number::ContextSpecific(ref num) |
+            Number::Private(ref num) => try!(maybe_write_extended_number(w, *num)),
+            _ => {},
+    }
+
+    Ok(())
+}
+
+fn write_length (mut w: &mut Write, length: &Length) -> io::Result<()> {
+    match length {
+        &Length::Indefinite => w.write_u8(0x80),
+        &Length::Some(ref l) => {
+            if *l < 0x1F {
+                w.write_u8(*l as u8)
+            } else {
+                let count = {
+                    let mut count = 0;
+                    let mut val = *l;
+
+                    while {
+                        count += 1;
+                        val >>= 8;
+                        val > 0
+                    } {}
+                    count
+                } as u8;
+
+                try!(w.write_u8(count | 0x80));
+
+                for i in (0..count).rev() {
+                    // start with the largest bytes first
+                    let byte = ((*l & (0xFF << i * 8)) >> i * 8) as u8;
+                    try!(w.write_u8(byte));
+                }
+
+                Ok(())
+            }
+        },
+    }
+}
+
+fn write_payload (mut w: &mut Write, payload: &Payload) -> io::Result<()> {
+    match payload {
+        &Payload::Primitive(ref v) => {
+            w.write_all(v)
+        },
+        &Payload::Constructed(ref v) => {
+            for tag in v {
+                try!(tag.write(w));
+            }
+            Ok(())
+        },
+    }
+}
+
 impl Tag {
-    fn inner_read (r: &mut TrackedReader) -> Result<Tag, err::Error> {
+    fn inner_read (r: &mut TrackedRead) -> Result<Tag, err::Error> {
         let offset = r.tell();
 
         let (_class, flavor, number) = match read_identifiers(r) {
@@ -229,58 +333,89 @@ impl Tag {
 
         Ok(Tag {
             number: number,
-            length: length,
             offset: Some(offset),
             payload: payload,
         })
     }
-    pub fn read (r: &mut Reader) -> Result<Tag, err::Error> {
-        Tag::inner_read(&mut TrackedReader::new(r))
+    pub fn read (r: &mut Read) -> Result<Tag, err::Error> {
+        Tag::inner_read(&mut TrackedRead::new(r))
+    }
+
+    pub fn write (&self, mut w: &mut Write) -> io::Result<()> {
+        let class = match self.number {
+            Number::Universal(_) => Class::Universal,
+            Number::Application(_) => Class::Application,
+            Number::ContextSpecific(_) => Class::ContextSpecific,
+            Number::Private(_) => Class::Private,
+        };
+
+        let (flavor, length) = match self.payload {
+            Payload::Primitive(ref v) => (Flavor::Primitive, Length::Some(v.len() as u64)),
+            Payload::Constructed(_) => (Flavor::Constructed, Length::Indefinite),
+        };
+
+        try!(write_identifiers(w, &class, &flavor, &self.number));
+
+        try!(write_length(w, &length));
+
+        try!(write_payload(w, &self.payload));
+
+        match length {
+            Length::Indefinite => w.write_all(&[0x00, 0x00]),
+            _ => Ok(()),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::old_io::MemReader;
+    use std::io::Cursor;
     use super::*;
 
     #[test]
     fn test_ber_read_1 () {
         let payload = vec![0x30, 0x80, 0x0C, 0x03, 0x64, 0x65, 0x66, 0x00, 0x00];
-        let tag = Tag::read(&mut MemReader::new(payload)).unwrap();
+        let tag = Tag::read(&mut Cursor::new(payload)).unwrap();
 
         println!("{:?}", tag);
 
         assert!(
             tag == Tag {
                 number: Number::Universal(Type::Sequence),
-                length: Length::Indefinite,
                 offset: Some(0),
                 payload: Payload::Constructed(vec![ Tag {
                     number: Number::Universal(Type::Utf8String),
-                    length: Length::Some(3),
                     offset: Some(2),
                     payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
                 } ]),
             }
             );
+    }
+
+    #[test]
+    fn test_ber_write_1 () {
+        let payload = vec![0x30, 0x80, 0x0C, 0x03, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut Cursor::new(payload.clone())).unwrap();
+
+
+        let mut buf = Vec::<u8>::new();
+        tag.write(&mut buf).unwrap();
+        assert!(buf == payload);
     }
 
     #[test]
     fn test_ber_read_long_length () {
         let payload = vec![0x30, 0x80, 0x0C, 0x82, 0x03, 0x00, 0x64, 0x65, 0x66, 0x00, 0x00];
-        let tag = Tag::read(&mut MemReader::new(payload)).unwrap();
+        let tag = Tag::read(&mut Cursor::new(payload)).unwrap();
 
         println!("{:?}", tag);
 
         assert!(
             tag == Tag {
                 number: Number::Universal(Type::Sequence),
-                length: Length::Indefinite,
                 offset: Some(0),
                 payload: Payload::Constructed(vec![ Tag {
                     number: Number::Universal(Type::Utf8String),
-                    length: Length::Some(3),
                     offset: Some(2),
                     payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
                 } ]),
@@ -289,24 +424,45 @@ mod test {
     }
 
     #[test]
+    fn test_ber_write_long_length () {
+        let payload = vec![0x30, 0x80, 0x0C, 0x03, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut Cursor::new(payload.clone())).unwrap();
+
+
+        let mut buf = Vec::<u8>::new();
+        tag.write(&mut buf).unwrap();
+        assert!(buf == payload);
+    }
+
+    #[test]
     fn test_ber_read_extended_number () {
-        let payload = vec![0x30, 0x80, 0x9F, 0x0A, 0x82, 0x03, 0x00, 0x64, 0x65, 0x66, 0x00, 0x00];
-        let tag = Tag::read(&mut MemReader::new(payload)).unwrap();
+        let payload = vec![0x30, 0x80, 0x9F, 0x7F, 0x81, 0x03, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut Cursor::new(payload)).unwrap();
 
         println!("{:?}", tag);
 
         assert!(
             tag == Tag {
                 number: Number::Universal(Type::Sequence),
-                length: Length::Indefinite,
                 offset: Some(0),
                 payload: Payload::Constructed(vec![ Tag {
-                    number: Number::ContextSpecific(10),
-                    length: Length::Some(3),
+                    number: Number::ContextSpecific(0x7F),
                     offset: Some(2),
                     payload: Payload::Primitive(vec![0x64, 0x65, 0x66]),
                 } ]),
             }
             );
     }
+
+    #[test]
+    fn test_ber_write_extended_number () {
+        let payload = vec![0x30, 0x80, 0x9F, 0x7F, 0x03, 0x64, 0x65, 0x66, 0x00, 0x00];
+        let tag = Tag::read(&mut Cursor::new(payload.clone())).unwrap();
+
+
+        let mut buf = Vec::<u8>::new();
+        tag.write(&mut buf).unwrap();
+        assert!(buf == payload);
+    }
+
 }
