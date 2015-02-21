@@ -1,6 +1,6 @@
 [package]
 
-name = "rust-ber"
+name = "ber"
 version = "0.0.1"
 authors = ["dlevy47"]
 
