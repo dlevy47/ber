@@ -4,5 +4,5 @@ name = "rust-ber"
 version = "0.0.1"
 authors = ["dlevy47"]
 
-[dependencies.byteorder]
-git = "https://github.com/BurntSushi/byteorder"
+[dependencies]
+byteorder = "*"
