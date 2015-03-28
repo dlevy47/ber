@@ -3,6 +3,8 @@
 name = "ber"
 version = "0.0.2"
 authors = ["dlevy47"]
+description = "BER reading/writing"
+license = "MIT"
 
 [dependencies]
 byteorder = "*"
