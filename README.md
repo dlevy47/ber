@@ -1,3 +1,3 @@
 # BER reading/writing library in Rust
 
-[API Documentation](http://rustdox.com/dlevy47/rust-ber/rust-ber/)
+[API Documentation](http://rustdox.com/dlevy47/ber/ber/)
