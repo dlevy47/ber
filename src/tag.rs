@@ -1,9 +1,7 @@
-extern crate byteorder;
-
 use std::io::{self, Write, Read};
 use std::num::FromPrimitive;
 
-use self::byteorder::{ReadBytesExt, WriteBytesExt};
+use byteorder::{self, ReadBytesExt, WriteBytesExt};
 
 use err;
 use util::TrackedRead;
@@ -252,7 +250,7 @@ fn write_identifiers (mut w: &mut Write, class: &Class, flavor: &Flavor, number:
     Ok(())
 }
 
-fn write_length (mut w: &mut Write, length: &Length) -> io::Result<()> {
+fn write_length (mut w: &mut Write, length: &Length) -> byteorder::Result<()> {
     match length {
         &Length::Indefinite => w.write_u8(0x80),
         &Length::Some(ref l) => {

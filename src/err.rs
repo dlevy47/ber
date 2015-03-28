@@ -2,11 +2,14 @@ use std::error::{self, FromError};
 use std::fmt;
 use std::io;
 
+use byteorder;
+
 pub enum Kind {
     InvalidTypeAndFlavor,
     InvalidLength,
     NumberOverflow,
-    IoError(io::Error),
+    Io(io::Error),
+    Byteorder(byteorder::Error),
 }
 
 pub struct Error {
@@ -47,7 +50,8 @@ impl error::Error for Error {
             Kind::InvalidTypeAndFlavor  => "tag number and flavor mismatch",
             Kind::InvalidLength => "Indefinite length is only allowed for constructed tags",
             Kind::NumberOverflow => "BER number is larger than 8 bytes",
-            Kind::IoError(ref x) => x.description(),
+            Kind::Io(ref x) => error::Error::description(x),
+            Kind::Byteorder(ref x) => error::Error::description(x),
         }
     }
 
@@ -62,7 +66,16 @@ impl error::Error for Error {
 impl FromError<io::Error> for Error {
     fn from_error (err: io::Error) -> Error {
         Error {
-            kind: Kind::IoError(err),
+            kind: Kind::Io(err),
+            offset: 0,
+            cause: None,
+        }
+    }
+}
+impl FromError<byteorder::Error> for Error {
+    fn from_error (err: byteorder::Error) -> Error {
+        Error {
+            kind: Kind::Byteorder(err),
             offset: 0,
             cause: None,
         }

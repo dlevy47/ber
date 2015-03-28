@@ -1,4 +1,6 @@
-#![feature(io, core)]
+#![feature(core)]
+
+extern crate byteorder;
 
 pub mod err;
 pub mod tag;
