@@ -1,4 +1,5 @@
-use std::error::{self, FromError};
+use std::convert::From;
+use std::error;
 use std::fmt;
 use std::io;
 
@@ -63,8 +64,8 @@ impl error::Error for Error {
     }
 }
 
-impl FromError<io::Error> for Error {
-    fn from_error (err: io::Error) -> Error {
+impl From<io::Error> for Error {
+    fn from (err: io::Error) -> Error {
         Error {
             kind: Kind::Io(err),
             offset: 0,
@@ -72,8 +73,8 @@ impl FromError<io::Error> for Error {
         }
     }
 }
-impl FromError<byteorder::Error> for Error {
-    fn from_error (err: byteorder::Error) -> Error {
+impl From<byteorder::Error> for Error {
+    fn from (err: byteorder::Error) -> Error {
         Error {
             kind: Kind::Byteorder(err),
             offset: 0,
