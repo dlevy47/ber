@@ -6,4 +6,5 @@ pub mod err;
 pub mod tag;
 pub mod util;
 
-pub use tag::Tag;
+pub use err::Error;
+pub use tag::{Tag, Number, Payload};

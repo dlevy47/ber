@@ -42,12 +42,12 @@ pub enum Type {
 #[derive(PartialEq, Eq, Debug)]
 pub enum Number {
     Universal(Type),
-    Application(u64),
-    ContextSpecific(u64),
-    Private(u64),
+    Application(i64),
+    ContextSpecific(i64),
+    Private(i64),
 }
 
-#[derive(FromPrimitive, Copy)]
+#[derive(Debug, FromPrimitive, Copy)]
 enum Class {
     Universal       = 0,
     Application     = 1,
@@ -55,7 +55,7 @@ enum Class {
     Private         = 3,
 }
 
-#[derive(PartialEq, Eq, FromPrimitive, Copy)]
+#[derive(Debug, PartialEq, Eq, FromPrimitive, Copy)]
 enum Flavor {
     Primitive   = 0,
     Constructed = 1,
@@ -80,14 +80,14 @@ pub struct Tag {
     pub payload: Payload,
 }
 
-fn read_extended_number (mut r: &mut Read) -> Result<u64, err::Error> {
+fn read_extended_number (mut r: &mut Read) -> Result<i64, err::Error> {
     // 
     let mut count = 0usize;
-    let mut ret = 0u64;
+    let mut ret = 0i64;
 
     while count < 8 {
         let b = try!(r.read_u8());
-        let bits = (b & 0x7F) as u64;
+        let bits = (b & 0x7F) as i64;
 
         ret |= bits << (7 * count);
 
@@ -100,11 +100,11 @@ fn read_extended_number (mut r: &mut Read) -> Result<u64, err::Error> {
     Ok(ret)
 }
 
-fn maybe_read_extended_number (b: u8, r: &mut Read) -> Result<u64, err::Error> {
+fn maybe_read_extended_number (b: i8, r: &mut Read) -> Result<i64, err::Error> {
     if b == 0x1F {
         read_extended_number(r)
     } else {
-        Ok(b as u64)
+        Ok(b as i64)
     }
 }
 
@@ -114,15 +114,15 @@ fn read_identifiers (mut r: &mut Read) -> Result<(Class, Flavor, Number), err::E
     // these are unwrappable because they are comprehensive within their ranges
     let class:  Class  = FromPrimitive::from_u8((b & 0xC0) >> 6).unwrap();
     let flavor: Flavor = FromPrimitive::from_u8((b & 0x20) >> 5).unwrap();
-    let number = b & 0x1F;
+    let number = (b & 0x1F) as i8;
 
     let number = match class {
         Class::Universal => {
-            if number == 0x7F {
+            if number == 0x1F {
                 // this is only valid in non-universal classes
                 return Err(err::Error::new(err::Kind::InvalidTypeAndFlavor, 0, None));
             }
-            Number::Universal(FromPrimitive::from_u8(number).unwrap())
+            Number::Universal(FromPrimitive::from_i8(number).unwrap())
         },
         Class::Application =>
             Number::Application(try!(maybe_read_extended_number(number, r))),
@@ -153,7 +153,7 @@ fn read_length (mut r: &mut Read) -> Result<Length, err::Error> {
 
         for i in 0..count {
             let b = try!(r.read_u8());
-            ret |= (b as u64) << (i * 8);
+            ret |= (b as u64) << ((count - i -1) * 8);
         }
 
         Ok(Length::Some(ret))
@@ -200,7 +200,7 @@ fn read_payload(length: &Length, flavor: &Flavor, mut r: &mut TrackedRead) -> Re
     }
 }
 
-fn write_extended_number (mut w: &mut Write, mut num: u64) -> io::Result<()> {
+fn write_extended_number (mut w: &mut Write, mut num: i64) -> io::Result<()> {
     let mask = 0x7F;
 
     while num > 0 {
@@ -216,7 +216,7 @@ fn write_extended_number (mut w: &mut Write, mut num: u64) -> io::Result<()> {
     Ok(())
 }
 
-fn maybe_write_extended_number (w: &mut Write, num: u64) -> io::Result<()> {
+fn maybe_write_extended_number (w: &mut Write, num: i64) -> io::Result<()> {
     if num >= 0x1F {
         write_extended_number(w, num)
     } else {
@@ -316,6 +316,8 @@ impl Tag {
                 return Err(e);
             },
         };
+
+        println!("found {:?} {:?} {:?} {:?}", _class, flavor, number, length);
 
         if length == Length::Indefinite  && flavor == Flavor::Primitive {
             return Err(err::Error::new(err::Kind::InvalidLength, r.tell(), None));
@@ -461,6 +463,13 @@ mod test {
         let mut buf = Vec::<u8>::new();
         tag.write(&mut buf).unwrap();
         assert!(buf == payload);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_number () {
+        let payload = vec![0x3F];
+        let _tag = Tag::read(&mut Cursor::new(payload.clone())).unwrap();
     }
 
 }
