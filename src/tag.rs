@@ -6,7 +6,7 @@ use byteorder::{self, ReadBytesExt, WriteBytesExt};
 use err;
 use util::TrackedRead;
 
-#[derive(Debug, FromPrimitive, PartialEq, Eq, Copy)]
+#[derive(Debug, FromPrimitive, PartialEq, Eq, Clone, Copy)]
 pub enum Type {
     Eoc              = 0,
     Boolean          = 1,
@@ -47,7 +47,7 @@ pub enum Number {
     Private(i64),
 }
 
-#[derive(Debug, FromPrimitive, Copy)]
+#[derive(Debug, FromPrimitive, Clone, Copy)]
 enum Class {
     Universal       = 0,
     Application     = 1,
@@ -55,7 +55,7 @@ enum Class {
     Private         = 3,
 }
 
-#[derive(Debug, PartialEq, Eq, FromPrimitive, Copy)]
+#[derive(Debug, PartialEq, Eq, FromPrimitive, Clone, Copy)]
 enum Flavor {
     Primitive   = 0,
     Constructed = 1,
