@@ -1,12 +1,11 @@
 use std::io::{self, Write, Read};
-use std::num::FromPrimitive;
 
 use byteorder::{self, ReadBytesExt, WriteBytesExt};
 
 use err;
 use util::TrackedRead;
 
-#[derive(Debug, FromPrimitive, PartialEq, Eq, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Type {
     Eoc              = 0,
     Boolean          = 1,
@@ -39,6 +38,43 @@ pub enum Type {
     BmpString        = 30,
 }
 
+impl Type {
+    fn from_i8 (v: i8) -> Type {
+        match v {
+            0 =>  Type::Eoc,
+            1 =>  Type::Boolean,
+            2 =>  Type::Integer,
+            3 =>  Type::BitString,
+            4 =>  Type::OctetString,
+            5 =>  Type::Null,
+            6 =>  Type::ObjectIdentifier,
+            7 =>  Type::ObjectDescriptor,
+            8 =>  Type::External,
+            9 =>  Type::Real,
+            10 => Type::Enumerated,
+            11 => Type::EmbeddedPdv,
+            12 => Type::Utf8String,
+            13 => Type::RelativeOid,
+            16 => Type::Sequence,
+            17 => Type::Set,
+            18 => Type::NumericString,
+            19 => Type::PrintableString,
+            20 => Type::T61String,
+            21 => Type::VideotexString,
+            22 => Type::Ia5String,
+            23 => Type::UtcTime,
+            24 => Type::GeneralizedTime,
+            25 => Type::GraphicString,
+            26 => Type::VisibleString,
+            27 => Type::GeneralString,
+            28 => Type::UniversalString,
+            29 => Type::CharacterString,
+            30 => Type::BmpString,
+            _  => unreachable!(),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum Number {
     Universal(Type),
@@ -47,7 +83,7 @@ pub enum Number {
     Private(i64),
 }
 
-#[derive(Debug, FromPrimitive, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum Class {
     Universal       = 0,
     Application     = 1,
@@ -55,10 +91,32 @@ enum Class {
     Private         = 3,
 }
 
-#[derive(Debug, PartialEq, Eq, FromPrimitive, Copy)]
+impl Class {
+    fn from_u8 (v: u8) -> Class {
+        match v {
+            0 => Class::Universal,
+            1 => Class::Application,
+            2 => Class::ContextSpecific,
+            3 => Class::Private,
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Flavor {
     Primitive   = 0,
     Constructed = 1,
+}
+
+impl Flavor {
+    fn from_u8 (v: u8) -> Flavor {
+        match v {
+            0 => Flavor::Primitive,
+            1 => Flavor::Constructed,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -112,8 +170,8 @@ fn read_identifiers (mut r: &mut Read) -> Result<(Class, Flavor, Number), err::E
     let b = try!(r.read_u8());
 
     // these are unwrappable because they are comprehensive within their ranges
-    let class:  Class  = FromPrimitive::from_u8((b & 0xC0) >> 6).unwrap();
-    let flavor: Flavor = FromPrimitive::from_u8((b & 0x20) >> 5).unwrap();
+    let class:  Class  = Class::from_u8((b & 0xC0) >> 6);
+    let flavor: Flavor = Flavor::from_u8((b & 0x20) >> 5);
     let number = (b & 0x1F) as i8;
 
     let number = match class {
@@ -122,7 +180,7 @@ fn read_identifiers (mut r: &mut Read) -> Result<(Class, Flavor, Number), err::E
                 // this is only valid in non-universal classes
                 return Err(err::Error::new(err::Kind::InvalidTypeAndFlavor, 0, None));
             }
-            Number::Universal(FromPrimitive::from_i8(number).unwrap())
+            Number::Universal(Type::from_i8(number))
         },
         Class::Application =>
             Number::Application(try!(maybe_read_extended_number(number, r))),
@@ -316,8 +374,6 @@ impl Tag {
                 return Err(e);
             },
         };
-
-        println!("found {:?} {:?} {:?} {:?}", _class, flavor, number, length);
 
         if length == Length::Indefinite  && flavor == Flavor::Primitive {
             return Err(err::Error::new(err::Kind::InvalidLength, r.tell(), None));

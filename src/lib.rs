@@ -1,5 +1,3 @@
-#![feature(core)]
-
 extern crate byteorder;
 
 pub mod err;
